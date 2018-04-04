@@ -92,6 +92,7 @@
                         {path, nonempty_string()} |
                         {host, inet:ip_address() | inet:hostname()} |
                         {port, undefined | inet:port_number()} |
+                        {hostname, undefined | app_name()} |
                         {timeout, timeout_milliseconds()}).
 -export_type([transport/0,
               protocol/0,
@@ -379,7 +380,7 @@ severity_valid(Severity) ->
 
 init([Transport, TransportOptions, Protocol,
       UTF8, Facility, AppName,
-      Path, Host, Port, Timeout]) ->
+      Path, Host, Port, Timeout, HostName]) ->
     State0 = #state{transport = Transport,
                     transport_options = TransportOptions,
                     protocol = Protocol,
@@ -390,7 +391,8 @@ init([Transport, TransportOptions, Protocol,
                     path = Path,
                     host = Host,
                     port = Port,
-                    timeout = Timeout},
+                    timeout = Timeout,
+                    hostname = HostName},
     case transport_open(State0) of
         {ok, State1} ->
             StateN = protocol_init(State1),
@@ -464,10 +466,11 @@ start(Options) when is_list(Options) ->
                 {path, "/dev/log"},
                 {host, {127,0,0,1}},
                 {port, undefined},
-                {timeout, ?TIMEOUT_DEFAULT}],
+                {timeout, ?TIMEOUT_DEFAULT},
+                {hostname, undefined}],
     [Transport, TransportOptionsValue, Protocol,
      UTF8, FacilityValue, AppName,
-     Path, Host, PortValue, Timeout] = take_values(Defaults, Options),
+     Path, Host, PortValue, Timeout, HostName] = take_values(Defaults, Options),
     true = is_list(AppName) andalso is_integer(hd(AppName)), % required
     if
         Protocol =:= rfc3164 ->
@@ -528,15 +531,28 @@ start(Options) when is_list(Options) ->
     gen_server:start(?MODULE,
                      [Transport, TransportOptions, Protocol,
                       UTF8, Facility, AppName,
-                      Path, Host, Port, Timeout], []).
+                      Path, Host, Port, Timeout, HostName], []).
 
-protocol_init(#state{protocol = rfc3164} = State) ->
-    HostnameOnly = lists:takewhile(fun(C) -> C /= $. end, hostname()),
-    State#state{hostname = HostnameOnly,
-                os_pid = os:getpid()};
-protocol_init(#state{protocol = rfc5424} = State) ->
-    State#state{hostname = hostname(),
-                os_pid = os:getpid()}.
+protocol_init(#state{protocol = rfc3164, hostname = HostName} = State) ->
+    if
+        HostName=:=undefined ->
+            HostnameOnly = lists:takewhile(fun(C) -> C /= $. end, hostname()),
+            State#state{hostname = HostnameOnly,
+                        os_pid = os:getpid()};
+        is_list(HostName) ->
+            State#state{hostname = HostName,
+                        os_pid = os:getpid()}
+    end;
+
+protocol_init(#state{protocol = rfc5424, hostname = HostName} = State) ->
+    if
+        HostName=:=undefined ->
+            State#state{hostname = hostname(),
+                        os_pid = os:getpid()};
+        is_list(HostName) ->
+            State#state{hostname = HostName,
+                        os_pid = os:getpid()}
+    end.
 
 protocol_header(Severity, Timestamp, MessageId,
                 #state{transport = Transport,
